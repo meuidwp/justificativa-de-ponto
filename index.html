@@ -288,7 +288,7 @@
               if (t2) times.push({ t: t2, raw: part, x: it.x + (it.w * idx) / Math.max(it.str.length, 1) });
             });
           });
-          allDay.push({ page: pi, dia: Number(dm[1]), mes: Number(dm[2]), sem: dm[3], texto: t, times, width: pg.width });
+          allDay.push({ page: pi, y: l.y, dia: Number(dm[1]), mes: Number(dm[2]), sem: dm[3], texto: t, times, width: pg.width });
         }
       }
     });
@@ -320,7 +320,7 @@
         if (best.i < 4 && marks[best.i] === null) marks[best.i] = tm.t;
       });
       const falta = /f[a4]l[tl1]a/i.test(d.texto.replace(/^\d{2}\/\d{2}\s*[-–—~]?\s*[A-Za-zçÇáéíóú]{3}/, ''));
-      out.linhas.push({ dia: d.dia, mes: d.mes, sem: d.sem, marks, nTimes: n, texto: d.texto, falta });
+      out.linhas.push({ dia: d.dia, mes: d.mes, sem: d.sem, marks, nTimes: n, texto: d.texto, falta, _pg: d.page, _y: d.y });
     });
 
     if (!out.nome) out.avisos.push('Não encontrei o nome do servidor no PDF; preencha em Ajustes.');
@@ -331,6 +331,7 @@
       out.avisos.push('Não consegui ler o período do espelho; assumi o ano ' + out.ano + ' (ajuste se precisar).');
     }
     out.linhas.forEach((l) => { l.ano = out.ano; });
+    out.centers = centers.slice(0, 4); out.spacing = spacing;
     return out;
   };
 
@@ -559,14 +560,14 @@
     resetUi();
     try {
       setStatus('Abrindo o arquivo…'); setProg(null);
-      let result = null; const shots = [];
+      let result = null; const shots = []; let inkN = 0;
       if (file.type.startsWith('image/')) {
         const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
         const k = Math.max(1, 2480 / img.naturalWidth);
         const c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
         const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0, c.width, c.height);
         shots.push(c.toDataURL('image/jpeg', 0.7));
-        result = Core.parseTokens(await ocrCanvases([c]));
+        result = Core.parseTokens(await ocrCanvases([c])); inkN = markInk(result, [c]);
       } else {
         const lib = await loadPdfjs();
         const buf = await file.arrayBuffer();
@@ -585,11 +586,12 @@
           if (useful < 5) big.push(await renderPageToCanvas(page, 2480));
         }
         if (useful >= 5) result = r1;
-        else result = Core.parseTokens(await ocrCanvases(big));
+        else { result = Core.parseTokens(await ocrCanvases(big)); inkN = markInk(result, big); }
         if (useful < 5) result.avisos.unshift('O PDF não tem texto selecionável, então a leitura foi feita por OCR. Confira os horários na tabela de conferência.');
       }
       setProg(null);
       if (!result.linhas.length) throw new Error('Não encontrei as linhas de dias (ex.: 01/09-ter) neste arquivo. Ele é mesmo um espelho de ponto?');
+      if (inkN) result.avisos.unshift(inkN + ' célula(s) pareciam vazias mas têm escrita que o leitor não reconheceu. Elas aparecem em cinza (??) na tabela de conferência e NÃO são preenchidas: digite o horário correto ou apague se realmente estiver em branco.');
       state.nome = result.nome; state.matricula = result.matricula; state.ano = result.ano;
       state.linhas = result.linhas; state.shots = shots; state.overrides = {};
       $('f-nome').value = state.nome; $('f-mat').value = state.matricula; $('f-ano').value = state.ano;
@@ -602,6 +604,36 @@
       console.error(e); setProg(null);
       setStatus('Erro: ' + (e && e.message ? e.message : e));
     }
+  }
+
+  // Leitura por imagem: se a célula de uma marcação "vazia" tem tinta (escrita à mão que o OCR não reconheceu), ela NÃO é lacuna:
+  // vira marcação ilegível ('??'), que o sistema não preenche e que você corrige/limpa na tabela de conferência.
+  function markInk(result, canvases) {
+    if (!result.centers || result.centers.length < 4) return 0;
+    const byPage = {};
+    result.linhas.forEach((l) => { (byPage[l._pg] = byPage[l._pg] || []).push(l); });
+    let n = 0;
+    Object.keys(byPage).forEach((pg) => {
+      const rows = byPage[pg].slice().sort((a, b) => b._y - a._y);
+      const diffs = rows.slice(1).map((r, i) => Math.abs(rows[i]._y - r._y)).filter((d) => d > 4).sort((a, b) => a - b);
+      const rowH = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 60;
+      const c = canvases[pg]; if (!c) return;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      const hw = result.spacing * 0.3, hh = rowH * 0.3;
+      rows.forEach((l) => {
+        if (!l.marks.some((x) => x !== null)) return;
+        l.marks.forEach((m, k) => {
+          if (m !== null) return;
+          const x0 = Math.max(0, Math.round(result.centers[k] - hw)), y0 = Math.max(0, Math.round(-l._y - hh));
+          const w = Math.min(c.width - x0, Math.round(hw * 2)), h = Math.min(c.height - y0, Math.round(hh * 2));
+          if (w < 4 || h < 4) return;
+          const d = ctx.getImageData(x0, y0, w, h).data; let dark = 0;
+          for (let i = 0; i < d.length; i += 4) if (d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11 < 150) dark++;
+          if (dark / (w * h) > 0.012) { l.marks[k] = Core.ILEGIVEL; n++; }
+        });
+      });
+    });
+    return n;
   }
 
   function resetUi() {
