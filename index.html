@@ -112,7 +112,7 @@
 
     <details id="conf">
       <summary>Conferir a leitura do espelho (todos os dias)</summary>
-      <p class="hint">O OCR pode errar algum número. Corrija aqui se quiser: deixe a célula vazia só quando a marcação realmente não existe. Horários que o leitor não conseguiu ler aparecem como ?? e não são preenchidos. As justificativas acima se atualizam sozinhas.</p>
+      <p class="hint">Digite só o número do horário (12 vira 12:00; 12.06 vira 12:06) e use Enter para ir ao próximo campo. O OCR pode errar algum número. Corrija aqui se quiser: deixe a célula vazia só quando a marcação realmente não existe. Horários que o leitor não conseguiu ler aparecem como ?? e não são preenchidos. As justificativas acima se atualizam sozinhas.</p>
       <div class="legend"><span><i style="background:var(--warn-bg)"></i>marcação ausente</span><span><i style="background:#eef0f3"></i>horário escrito que o leitor não conseguiu ler (considerado marcado, não é preenchido)</span></div>
       <div class="scroll"><table id="espelho"><thead><tr><th>Dia</th><th class="t">1ª</th><th class="t">2ª</th><th class="t">3ª</th><th class="t">4ª</th><th>Observação</th></tr></thead><tbody></tbody></table></div>
       <div id="shots"></div>
@@ -616,8 +616,9 @@
     v = String(v).trim();
     if (v === '') return null;
     if (v === Core.ILEGIVEL) return v;
-    const m = v.match(/^(\d{1,2})\s*[:h.,;]?\s*(\d{2})$/i);
-    if (m && +m[1] < 24 && +m[2] < 60) return pad(+m[1]) + ':' + m[2];
+    // aceita: 12 | 9 | 12h | 12:06 | 12.06 | 12,06 | 12;06 | 12h30 | 1206 | 930 (o ponto vale como dois-pontos)
+    const m = v.match(/^(\d{1,2})\s*(?:[:h.,;]\s*)?(\d{2})?\s*h?$/i);
+    if (m && +m[1] < 24 && (m[2] === undefined || +m[2] < 60)) return pad(+m[1]) + ':' + (m[2] === undefined ? '00' : m[2]);
     return Core.ILEGIVEL;
   }
 
@@ -631,19 +632,30 @@
       const obs = worked ? '' : l.texto.replace(/^\S+\s+/, '');
       if (!worked) tr.className = 'off';
       tr.innerHTML = '<td class="date">' + pad(l.dia) + '/' + pad(l.mes) + ' <small>' + (SEM[(l.sem || '').toLowerCase()] || l.sem) + '</small></td>' +
-        [0, 1, 2, 3].map((k) => '<td><input class="t" type="text" data-i="' + i + '" data-k="' + k + '" maxlength="5"></td>').join('') +
+        [0, 1, 2, 3].map((k) => '<td><input class="t" type="text" data-i="' + i + '" data-k="' + k + '" maxlength="5" enterkeyhint="next"></td>').join('') +
         '<td><small>' + esc(obs) + '</small></td>';
       tb.appendChild(tr);
       tr.querySelectorAll('input').forEach((inp) => {
         const k = +inp.dataset.k; inp.value = l.marks[k] === null ? '' : l.marks[k];
         styleCell(inp, l, k, worked);
-        inp.addEventListener('change', () => {
+        const commit = () => {
           const v = normTime(inp.value);
           l.marks[k] = v; inp.value = v === null ? '' : v;
           const w = l.marks.some((x) => x !== null);
           tr.className = w ? '' : 'off';
           tr.querySelectorAll('input').forEach((x) => styleCell(x, l, +x.dataset.k, w));
           recompute();
+        };
+        inp.addEventListener('change', commit);
+        inp.addEventListener('focus', () => inp.select());
+        inp.addEventListener('keydown', (ev) => {
+          if (ev.key !== 'Enter') return;
+          ev.preventDefault();
+          const v = normTime(inp.value);
+          if (v !== l.marks[k]) commit(); else inp.value = v === null ? '' : v;
+          const list = Array.from($('espelho').querySelectorAll('tbody input.t'));
+          const nx = list[list.indexOf(inp) + 1];
+          if (nx) { nx.focus(); nx.select(); } else inp.blur();
         });
       });
     });
@@ -656,11 +668,12 @@
   }
 
   /* ---------- Cálculo e tabela de justificativas ---------- */
+  function cfgTime(id, def) { const v = normTime($(id).value); return v && v !== Core.ILEGIVEL ? v : def; }
   function readCfg() {
     return {
-      entrada: normTime($('c-ent').value) || '08:00', saida: normTime($('c-sai').value) || '17:00',
+      entrada: cfgTime('c-ent', '08:00'), saida: cfgTime('c-sai', '17:00'),
       almocoMin: Number($('c-alm').value) || 0, limiteEsquecimento: Number($('c-lim').value) || 0,
-      motivoEsquecimento: $('c-m1').value, motivoExterna: $('c-m2').value, motivoAbono: $('c-m3').value || 'Servidor em Abono', almocoSaida: normTime($('c-sa').value) || '12:00', posicao: $('c-pos').value, fonte: $('c-fonte').value,
+      motivoEsquecimento: $('c-m1').value, motivoExterna: $('c-m2').value, motivoAbono: $('c-m3').value || 'Servidor em Abono', almocoSaida: cfgTime('c-sa', '12:00'), posicao: $('c-pos').value, fonte: $('c-fonte').value,
     };
   }
 
@@ -680,6 +693,7 @@
     renderEntries();
   }
 
+  let pendingFocus = null; // índice do campo de horário que deve receber o foco após redesenhar a tabela (tecla Enter)
   function renderEntries() {
     const tb = $('entries').querySelector('tbody'); tb.innerHTML = '';
     const es = state.entries;
@@ -695,17 +709,31 @@
       if (!e.incluir) tr.className = 'off';
       tr.innerHTML = '<td><input type="checkbox" ' + (e.incluir ? 'checked' : '') + ' aria-label="Incluir ' + pad(e.dia) + '/' + pad(e.mes) + '"></td>' +
         '<td class="date">' + pad(e.dia) + '/' + pad(e.mes) + '/' + e.ano + ' <small>' + (SEM[(e.sem || '').toLowerCase()] || e.sem) + '</small></td>' +
-        [0, 1, 2, 3].map((j) => '<td><input class="t ' + (e.slots[j] ? 'fill' : '') + '" type="text" maxlength="5" data-j="' + j + '" value="' + (e.slots[j] || '') + '" placeholder="' + (e.original[j] && e.original[j] !== Core.ILEGIVEL ? e.original[j] : '') + '"></td>').join('') +
+        [0, 1, 2, 3].map((j) => '<td><input class="t ' + (e.slots[j] ? 'fill' : '') + '" type="text" maxlength="5" enterkeyhint="next" data-j="' + j + '" value="' + (e.slots[j] || '') + '" placeholder="' + (e.original[j] && e.original[j] !== Core.ILEGIVEL ? e.original[j] : '') + '"></td>').join('') +
         '<td><input class="motivo" type="text" value="' + esc(e.motivo || '') + '"></td>';
       tb.appendChild(tr);
       tr.querySelector('input[type=checkbox]').addEventListener('change', (ev) => {
         (state.overrides[k] = state.overrides[k] || {}).incluir = ev.target.checked; recompute();
       });
-      tr.querySelectorAll('input.t').forEach((inp) => inp.addEventListener('change', () => {
-        const slots = e.slots.slice(); const v = normTime(inp.value);
-        slots[+inp.dataset.j] = v === Core.ILEGIVEL ? null : v;
-        (state.overrides[k] = state.overrides[k] || {}).slots = slots; recompute();
-      }));
+      tr.querySelectorAll('input.t').forEach((inp) => {
+        const commit = () => {
+          if (!inp.isConnected) return;
+          const slots = e.slots.slice(); const v = normTime(inp.value);
+          slots[+inp.dataset.j] = v === Core.ILEGIVEL ? null : v;
+          (state.overrides[k] = state.overrides[k] || {}).slots = slots; recompute();
+        };
+        inp.addEventListener('change', commit);
+        inp.addEventListener('focus', () => inp.select());
+        inp.addEventListener('keydown', (ev) => {
+          if (ev.key !== 'Enter') return;
+          ev.preventDefault();
+          const list = Array.from($('entries').querySelectorAll('tbody input.t'));
+          const idx = list.indexOf(inp);
+          const v = normTime(inp.value); const nv = v === Core.ILEGIVEL ? null : v;
+          if (nv !== (e.slots[+inp.dataset.j] || null)) { pendingFocus = idx + 1; commit(); pendingFocus = null; }
+          else { inp.value = nv || ''; const nx = list[idx + 1]; if (nx) { nx.focus(); nx.select(); } else inp.blur(); }
+        });
+      });
       tr.querySelector('input.motivo').addEventListener('change', (ev) => {
         (state.overrides[k] = state.overrides[k] || {}).motivo = ev.target.value; recompute();
       });
@@ -715,6 +743,10 @@
         tb.appendChild(w);
       }
     });
+    if (pendingFocus !== null) {
+      const nx = tb.querySelectorAll('input.t')[pendingFocus];
+      if (nx) { nx.focus(); nx.select(); }
+    }
   }
 
   /* ---------- Geração do PDF ---------- */
