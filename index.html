@@ -159,6 +159,7 @@
     <div class="row">
       <button class="btn" id="gen">Gerar justificativa em PDF</button>
       <a class="btn sec hidden" id="dl" download>Baixar PDF</a>
+      <a class="btn sec hidden" id="prt" target="_blank" rel="noopener">Abrir para imprimir</a>
       <span id="genmsg" class="hint" style="margin:0"></span>
     </div>
     <iframe id="preview" class="hidden" title="Pré-visualização da justificativa"></iframe>
@@ -605,7 +606,7 @@
 
   function resetUi() {
     ['s2', 's3', 's4'].forEach((i) => $(i).classList.add('hidden'));
-    $('dl').classList.add('hidden'); $('preview').classList.add('hidden'); $('genmsg').textContent = '';
+    $('dl').classList.add('hidden'); $('prt').classList.add('hidden'); $('preview').classList.add('hidden'); $('genmsg').textContent = '';
     $('notes').innerHTML = '';
   }
 
@@ -793,11 +794,9 @@
     const inc = state.entries.filter((e) => e.incluir);
     if (!inc.length) { $('genmsg').textContent = 'Nenhuma justificativa marcada para incluir.'; return; }
     if (state.linhas.some((l) => l.marks.includes(Core.ILEGIVEL))) {
-      $('genmsg').textContent = 'Há marcação ilegível (em vermelho) na tabela de conferência. Corrija antes de gerar.'; $('conf').open = true; return;
+      $('genmsg').textContent = 'Há marcação ilegível (em cinza) na tabela de conferência. Corrija antes de gerar.'; $('conf').open = true; $('conf').scrollIntoView({ behavior: 'smooth' }); return;
     }
-    if (inc.some((e) => e.warn.length)) {
-      if (!confirm('Algumas justificativas têm avisos (horário não calculado). Gerar mesmo assim?')) return;
-    }
+    const nWarn = inc.filter((e) => e.warn.length).length;
     $('gen').disabled = true;
     try {
       const tpl = b64bytes('b64-template');
@@ -812,10 +811,12 @@
       const dl = $('dl');
       dl.href = state.pdfUrl;
       dl.download = ('Justificativa de Ponto - ' + (info.nome || 'servidor') + ' - ' + mes + ' ' + inc[0].ano + '.pdf').replace(/[\\/:*?"<>|]/g, '');
-      dl.classList.remove('hidden');
+      dl.classList.remove('hidden'); $('prt').href = state.pdfUrl;
       const pv = $('preview'); pv.src = state.pdfUrl; pv.classList.remove('hidden');
       const nPag = Math.ceil(inc.length / 9);
-      $('genmsg').textContent = 'Pronto! ' + inc.length + ' justificativa(s) em ' + nPag + ' página(s).';
+      $('genmsg').textContent = 'Pronto! ' + inc.length + ' justificativa(s) em ' + nPag + ' página(s).' + (nWarn ? ' Atenção: ' + nWarn + ' dia(s) com horário não preenchido (aviso amarelo acima) saíram incompletos.' : '');
+      $('prt').classList.remove('hidden');
+      $('s4').scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) {
       console.error(e); $('genmsg').textContent = 'Erro ao gerar o PDF: ' + e.message;
     } finally { $('gen').disabled = false; }
