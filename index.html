@@ -53,6 +53,7 @@
   .t{width:74px;text-align:center;font-variant-numeric:tabular-nums;padding:6px 4px!important}
   .t.gap{background:var(--warn-bg);border-color:#ecc86a}
   .t.bad{background:var(--err-bg);border-color:#e3a3a0;color:var(--err)}
+  .t.unread{background:#eef0f3;border-color:#c5ccd6;color:var(--muted)}
   .t.fill{background:var(--chip);border-color:#a9c8ee;font-weight:600}
   tr.off td{color:#8794a3}
   tr.off .t{background:#f1f3f6}
@@ -111,8 +112,8 @@
 
     <details id="conf">
       <summary>Conferir a leitura do espelho (todos os dias)</summary>
-      <p class="hint">O OCR pode errar algum número. Corrija aqui se precisar: deixe a célula vazia quando a marcação realmente não existe. As justificativas acima se atualizam sozinhas.</p>
-      <div class="legend"><span><i style="background:var(--warn-bg)"></i>marcação ausente</span><span><i style="background:var(--err-bg)"></i>ilegível: precisa corrigir</span></div>
+      <p class="hint">O OCR pode errar algum número. Corrija aqui se quiser: deixe a célula vazia só quando a marcação realmente não existe. Horários que o leitor não conseguiu ler aparecem como ?? e não são preenchidos. As justificativas acima se atualizam sozinhas.</p>
+      <div class="legend"><span><i style="background:var(--warn-bg)"></i>marcação ausente</span><span><i style="background:#eef0f3"></i>horário escrito que o leitor não conseguiu ler (considerado marcado, não é preenchido)</span></div>
       <div class="scroll"><table id="espelho"><thead><tr><th>Dia</th><th class="t">1ª</th><th class="t">2ª</th><th class="t">3ª</th><th class="t">4ª</th><th>Observação</th></tr></thead><tbody></tbody></table></div>
       <div id="shots"></div>
     </details>
@@ -347,11 +348,11 @@
       const ok = (x) => x !== null && x !== Core.ILEGIVEL;
       if (m[0] === null) slots[0] = s.entrada;
       if (m[3] === null) slots[3] = s.saida;
+      // Marcação ilegível ('??') = há horário escrito que o OCR não leu: conta como marcada e NÃO é preenchida nem gera pedido de confirmação.
       if (m[1] === null && ok(m[2])) slots[1] = fromMin(toMin(m[2]) - lunch);
       else if (m[2] === null && ok(m[1])) slots[2] = fromMin(toMin(m[1]) + lunch);
       else if (m[1] === null && m[2] === null) warn.push('Faltam a 2ª e a 3ª marcações: preencha manualmente.');
-      else if (m[1] === null || m[2] === null) warn.push('A marcação vizinha está ilegível: corrija na tabela.');
-      if (m.includes(Core.ILEGIVEL)) warn.push('Há marcação ilegível neste dia.');
+      else if (m[1] === null || m[2] === null) warn.push('Não deu para calcular o horário que falta (a marcação vizinha não foi lida): preencha manualmente.');
       entries.push({
         dia: l.dia, mes: l.mes, ano: l.ano, sem: l.sem,
         original: m, slots, missing: missing.map((k) => k + 1), warn, incluir: true,
@@ -633,8 +634,8 @@
     });
   }
   function styleCell(inp, l, k, worked) {
-    inp.classList.remove('gap', 'bad');
-    if (l.marks[k] === Core.ILEGIVEL) inp.classList.add('bad');
+    inp.classList.remove('gap', 'bad', 'unread');
+    if (l.marks[k] === Core.ILEGIVEL) { inp.classList.add('unread'); inp.title = 'Há horário escrito, mas o leitor não conseguiu ler. Não será preenchido.'; }
     else if (l.marks[k] === null && worked) { inp.classList.add('gap'); inp.placeholder = 'falta'; }
     else inp.placeholder = '';
   }
