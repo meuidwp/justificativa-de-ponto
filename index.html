@@ -135,6 +135,8 @@
         <div><label for="c-lim">Esquecimento até a justificativa nº</label><input id="c-lim" type="number" min="0" value="3"></div>
         <div style="grid-column:1/-1"><label for="c-m1">Motivo até o limite</label><input id="c-m1" type="text" value="Esquecimento de marcação"></div>
         <div style="grid-column:1/-1"><label for="c-m2">Motivo acima do limite</label><input id="c-m2" type="text" value="Atividade externa NAAS Maresias"></div>
+        <div style="grid-column:1/-1"><label for="c-m3">Motivo quando o espelho traz "falta" (marca as 4 horas)</label><input id="c-m3" type="text" value="Servidor em Abono"></div>
+        <div><label for="c-sa">Saída p/ almoço nos dias de abono</label><input id="c-sa" type="text" value="12:00"></div>
         <div><label for="c-fonte">Letra do preenchimento</label>
           <select id="c-fonte"><option value="manuscrita">Manuscrita (letra de mão)</option><option value="padrao">Padrão (Helvetica)</option></select></div>
         <div><label for="c-pos">Onde escrever o horário na linha</label>
@@ -199,6 +201,8 @@
     limiteEsquecimento: 3,
     motivoEsquecimento: 'Esquecimento de marcação',
     motivoExterna: 'Atividade externa NAAS Maresias',
+    motivoAbono: 'Servidor em Abono', // dias com "falta" escrita no espelho: marca as 4 horas
+    almocoSaida: '12:00',             // saída para o almoço usada nos dias de abono (o retorno = saída + intervalo de almoço)
     posicao: 'coluna', // 'coluna' = horário na coluna da marcação que faltou; 'primeira' = sequência a partir da 1ª coluna
     fonte: 'manuscrita', // 'manuscrita' (letra de mão, vetorial) ou 'padrao' (Helvetica)
   };
@@ -313,7 +317,8 @@
         n++;
         if (best.i < 4 && marks[best.i] === null) marks[best.i] = tm.t;
       });
-      out.linhas.push({ dia: d.dia, mes: d.mes, sem: d.sem, marks, nTimes: n, texto: d.texto });
+      const falta = /f[a4]l[tl1]a/i.test(d.texto.replace(/^\d{2}\/\d{2}\s*[-–—~]?\s*[A-Za-zçÇáéíóú]{3}/, ''));
+      out.linhas.push({ dia: d.dia, mes: d.mes, sem: d.sem, marks, nTimes: n, texto: d.texto, falta });
     });
 
     if (!out.nome) out.avisos.push('Não encontrei o nome do servidor no PDF; preencha em Ajustes.');
@@ -340,7 +345,16 @@
     const entries = [];
     linhas.forEach((l) => {
       const m = l.marks.slice();
-      if (!m.some((x) => x !== null)) return;       // folga, feriado, compensado, falta... sem marcações
+      if (!m.some((x) => x !== null)) {
+        if (l.falta) {                              // "falta" escrita no espelho: Servidor em Abono, todas as horas marcadas
+          const sa = s.almocoSaida || '12:00';
+          entries.push({
+            dia: l.dia, mes: l.mes, ano: l.ano, sem: l.sem,
+            original: m, slots: [s.entrada, sa, fromMin(toMin(sa) + lunch), s.saida], missing: [1, 2, 3, 4], warn: [], incluir: true, abono: true,
+          });
+        }
+        return;                                     // folga, feriado, compensado... sem marcações
+      }
       const missing = [0, 1, 2, 3].filter((k) => m[k] === null);
       if (!missing.length) return;                  // dia completo
       const slots = [null, null, null, null];
@@ -366,6 +380,7 @@
     const s = Object.assign({}, Core.DEFAULTS, cfg || {});
     let n = 0;
     entries.forEach((e) => {
+      if (e.abono) { e.motivo = s.motivoAbono; return; }
       if (!e.incluir) return;
       e.motivo = n < Number(s.limiteEsquecimento) ? s.motivoEsquecimento : s.motivoExterna;
       n++;
@@ -645,7 +660,7 @@
     return {
       entrada: normTime($('c-ent').value) || '08:00', saida: normTime($('c-sai').value) || '17:00',
       almocoMin: Number($('c-alm').value) || 0, limiteEsquecimento: Number($('c-lim').value) || 0,
-      motivoEsquecimento: $('c-m1').value, motivoExterna: $('c-m2').value, posicao: $('c-pos').value, fonte: $('c-fonte').value,
+      motivoEsquecimento: $('c-m1').value, motivoExterna: $('c-m2').value, motivoAbono: $('c-m3').value || 'Servidor em Abono', almocoSaida: normTime($('c-sa').value) || '12:00', posicao: $('c-pos').value, fonte: $('c-fonte').value,
     };
   }
 
