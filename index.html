@@ -55,6 +55,7 @@
   .t.bad{background:var(--err-bg);border-color:#e3a3a0;color:var(--err)}
   .t.unread{background:#eef0f3;border-color:#c5ccd6;color:var(--muted)}
   .t.fill{background:var(--chip);border-color:#a9c8ee;font-weight:600}
+  .t.filled{background:var(--chip);border-color:#a9c8ee;font-weight:600}
   tr.off td{color:#8794a3}
   tr.off .t{background:#f1f3f6}
   .motivo{min-width:230px}
@@ -113,7 +114,7 @@
     <details id="conf">
       <summary>Conferir a leitura do espelho (todos os dias)</summary>
       <p class="hint">Digite só o número do horário (12 vira 12:00; 12.06 vira 12:06) e use Enter para ir ao próximo campo. O OCR pode errar algum número. Corrija aqui se quiser: deixe a célula vazia só quando a marcação realmente não existe. Horários que o leitor não conseguiu ler aparecem como ?? e não são preenchidos. As justificativas acima se atualizam sozinhas.</p>
-      <div class="legend"><span><i style="background:var(--warn-bg)"></i>marcação ausente</span><span><i style="background:#eef0f3"></i>horário escrito que o leitor não conseguiu ler (considerado marcado, não é preenchido)</span></div>
+      <div class="legend"><span><i style="background:var(--chip);border:1px solid #a9c8ee"></i>horário preenchido na justificativa (vem de lá automaticamente; pode editar aqui também)</span><span><i style="background:var(--warn-bg)"></i>marcação ausente ainda sem preenchimento</span><span><i style="background:#eef0f3"></i>horário escrito que o leitor não conseguiu ler (considerado marcado, não é preenchido)</span></div>
       <div class="scroll"><table id="espelho"><thead><tr><th>Dia</th><th class="t">1ª</th><th class="t">2ª</th><th class="t">3ª</th><th class="t">4ª</th><th>Observação</th></tr></thead><tbody></tbody></table></div>
       <div id="shots"></div>
     </details>
@@ -640,6 +641,13 @@
         styleCell(inp, l, k, worked);
         const commit = () => {
           const v = normTime(inp.value);
+          const fe = filledSlot(l, k);
+          if (fe !== null && l.marks[k] === null) {   // célula já preenchida pela justificativa: a edição altera a justificativa
+            const e = entryOf(l); const slots = e.slots.slice();
+            slots[k] = v === Core.ILEGIVEL ? null : v;
+            (state.overrides[key(e)] = state.overrides[key(e)] || {}).slots = slots;
+            recompute(); return;
+          }
           l.marks[k] = v; inp.value = v === null ? '' : v;
           const w = l.marks.some((x) => x !== null);
           tr.className = w ? '' : 'off';
@@ -652,11 +660,37 @@
           if (ev.key !== 'Enter') return;
           ev.preventDefault();
           const v = normTime(inp.value);
-          if (v !== l.marks[k]) commit(); else inp.value = v === null ? '' : v;
+          const cur = l.marks[k] === null ? filledSlot(l, k) : l.marks[k];
+          if (v !== cur) commit(); else inp.value = v === null ? '' : v;
           const list = Array.from($('espelho').querySelectorAll('tbody input.t'));
           const nx = list[list.indexOf(inp) + 1];
           if (nx) { nx.focus(); nx.select(); } else inp.blur();
         });
+      });
+    });
+  }
+  function entryOf(l) { return state.entries.find((e) => e.dia === l.dia && e.mes === l.mes) || null; }
+  // horário que a justificativa preenche nesta posição (null se não há)
+  function filledSlot(l, k) {
+    if (l.marks[k] !== null) return null;
+    const e = entryOf(l);
+    return e && e.slots[k] ? e.slots[k] : null;
+  }
+  // Atualiza a tabela de conferência com o que está nas justificativas (sem redesenhar, para não perder o foco)
+  function syncEspelho() {
+    const rows = $('espelho').querySelectorAll('tbody tr');
+    state.linhas.forEach((l, i) => {
+      const tr = rows[i]; if (!tr) return;
+      const worked = l.marks.some((x) => x !== null);
+      const e = entryOf(l);
+      tr.className = (!worked && !(e && e.slots.some(Boolean))) ? 'off' : '';
+      tr.querySelectorAll('input.t').forEach((inp) => {
+        const k = +inp.dataset.k;
+        if (document.activeElement === inp) return;
+        const f = filledSlot(l, k);
+        inp.classList.remove('filled');
+        if (f) { inp.value = f; inp.classList.add('filled'); inp.classList.remove('gap'); inp.title = 'Preenchido na justificativa (editável aqui ou na tabela acima).'; }
+        else if (l.marks[k] === null) { inp.value = ''; styleCell(inp, l, k, worked); }
       });
     });
   }
@@ -688,9 +722,13 @@
       if (ov.slots) e.slots = ov.slots.slice();
     });
     Core.applyReasons(entries, cfg);
-    entries.forEach((e) => { const ov = state.overrides[key(e)]; if (ov && ov.motivo !== undefined) e.motivo = ov.motivo; });
+    entries.forEach((e) => {
+      const ov = state.overrides[key(e)]; if (ov && ov.motivo !== undefined) e.motivo = ov.motivo;
+      if (e.warn.length && e.missing.every((n) => e.slots[n - 1])) e.warn = [];   // preenchido à mão: não há mais o que avisar
+    });
     state.entries = entries;
     renderEntries();
+    syncEspelho();
   }
 
   let pendingFocus = null; // índice do campo de horário que deve receber o foco após redesenhar a tabela (tecla Enter)
