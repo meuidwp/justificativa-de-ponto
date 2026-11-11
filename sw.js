@@ -1,6 +1,6 @@
 /* Service worker: deixa o aplicativo abrir offline.
    Ao publicar uma nova versão do app, aumente o número em VERSION para atualizar o cache nos aparelhos. */
-const VERSION = 'v7';
+const VERSION = 'v8';
 const CACHE = 'justificativa-ponto-' + VERSION;
 const RUNTIME = 'justificativa-ponto-runtime'; // bibliotecas de OCR (CDN), guardadas na primeira leitura
 const PRECACHE = [

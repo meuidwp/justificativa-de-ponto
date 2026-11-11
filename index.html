@@ -418,42 +418,70 @@
     const SIZE = hand ? 13 : 10;
     const per = ROW_TOPS.length;
     const entries = info.entries.filter((e) => e.incluir !== false);
-    const nPages = Math.max(1, Math.ceil(entries.length / per));
+    // Mais justificativas do que linhas no modelo: tudo em UMA página (as linhas do modelo são repetidas e a página é reduzida para caber)
+    const compact = entries.length > per && info.umaPagina !== false;
+    const nPages = compact ? 1 : Math.max(1, Math.ceil(entries.length / per));
     const ink = rgb(0.05, 0.1, 0.45);
     const handW = (txt, size) => { let w = 0; for (const ch of txt) { const g = HF.glyphs[ch]; w += g ? g.w : HF.glyphs[' '].w; } return w * size / HF.upem; };
+    const PAGE_W = tpl.getPage(0).getSize().width;
+    const RH = (ROW_TOPS[per - 1] - ROW_TOPS[0]) / (per - 1);   // altura de uma linha do modelo
+    const HB = ROW_TOPS[0] - 5;                                    // fim do cabeçalho / início da 1ª linha
+    const FB = HB + per * RH;                                      // início do rodapé (data, assinaturas)
+    let F = 1, XO = 0;                                             // escala e deslocamento horizontal da página atual
 
     for (let p = 0; p < nPages; p++) {
-      const [copy] = await out.copyPages(tpl, [0]);
-      const page = out.addPage(copy);
+      const page = out.addPage([PAGE_W, PAGE_H]);
+      const tplPage = tpl.getPage(0);
+      if (compact) {
+        const n = entries.length;
+        F = Math.min(1, PAGE_H / (HB + n * RH + (PAGE_H - FB)));
+        XO = (PAGE_W - PAGE_W * F) / 2;
+        const cut = async (top, bottom) => out.embedPage(tplPage, { left: 0, right: PAGE_W, bottom: PAGE_H - bottom, top: PAGE_H - top });
+        const head = await cut(0, HB), row = await cut(HB, HB + RH), foot = await cut(FB, PAGE_H);
+        const draw = (emb, top, h) => page.drawPage(emb, { x: XO, y: PAGE_H - (top + h) * F, xScale: F, yScale: F });
+        draw(head, 0, HB);
+        for (let r = 0; r < n; r++) draw(row, HB + r * RH, RH);
+        draw(foot, HB + n * RH, PAGE_H - FB);
+      } else {
+        F = 1; XO = 0;
+        page.drawPage(await out.embedPage(tplPage), { x: 0, y: 0 });
+      }
+      // y do modelo (a partir do topo) -> y na página de saída
+      const Yh = (t) => t * F;
+      const Yr = (r, t) => (compact ? (HB + r * RH + (t - HB)) * F : t);   // t = posição no modelo, na linha 0
+      const Yf = (t) => (compact ? (HB + entries.length * RH + (t - FB)) * F : t);
       const put = (txt, x0, x1, bottom, align) => {
         if (txt === null || txt === undefined || txt === '') return;
         txt = String(txt);
-        let size = SIZE;
-        const room = x1 - x0 - 4;
+        x1 = XO + x1 * F; x0 = XO + x0 * F;
+        let size = SIZE * F;
+        const room = x1 - x0 - 4 * F;
         let w = hand ? handW(txt, size) : font.widthOfTextAtSize(txt, size);
-        if (w > room) { size = Math.max(6, size * room / w); w = hand ? handW(txt, size) : font.widthOfTextAtSize(txt, size); }
-        let x = align === 'left' ? x0 + 2 : x0 + (x1 - x0 - w) / 2;
-        if (!hand) { page.drawText(txt, { x, y: PAGE_H - bottom + LIFT, size, font, color: ink }); return; }
+        if (w > room) { size = Math.max(6 * F, size * room / w); w = hand ? handW(txt, size) : font.widthOfTextAtSize(txt, size); }
+        let x = align === 'left' ? x0 + 2 * F : x0 + (x1 - x0 - w) / 2;
+        if (!hand) { page.drawText(txt, { x, y: PAGE_H - bottom + LIFT * F, size, font, color: ink }); return; }
         let i = 0;
         for (const ch of txt) {
           const g = HF.glyphs[ch] || HF.glyphs[' '];
           if (g.d) {
-            const wob = (((i * 7 + ch.charCodeAt(0)) % 5) - 2) * 0.12; // leve oscilação de linha, como escrita à mão
-            page.drawSvgPath(g.d, { x, y: PAGE_H - bottom + LIFT - 1 + wob, scale: size / HF.upem, color: ink, borderColor: ink, borderWidth: 0.25 / (size / HF.upem) * 0.5 });
+            const wob = (((i * 7 + ch.charCodeAt(0)) % 5) - 2) * 0.12 * F; // leve oscilação de linha, como escrita à mão
+            page.drawSvgPath(g.d, { x, y: PAGE_H - bottom + (LIFT - 1) * F + wob, scale: size / HF.upem, color: ink, borderColor: ink, borderWidth: 0.25 / (size / HF.upem) * 0.5 });
           }
           x += g.w * size / HF.upem; i++;
         }
       };
-      put(info.nome, NOME[0], NOME[1], NOME[2], 'center');
-      put(info.matricula, MATRIC[0], MATRIC[1], MATRIC[2], 'center');
+      put(info.nome, NOME[0], NOME[1], Yh(NOME[2]), 'center');
+      put(info.matricula, MATRIC[0], MATRIC[1], Yh(MATRIC[2]), 'center');
       const d = info.data;
       if (d) {
-        put(d.dia, DATA_LINE.dia[0], DATA_LINE.dia[1], DATA_LINE.bottom, 'center');
-        put(d.mes, DATA_LINE.mes[0], DATA_LINE.mes[1], DATA_LINE.bottom, 'center');
-        put(d.ano, DATA_LINE.ano[0], DATA_LINE.ano[1], DATA_LINE.bottom, 'center');
+        const yb = Yf(DATA_LINE.bottom);
+        put(d.dia, DATA_LINE.dia[0], DATA_LINE.dia[1], yb, 'center');
+        put(d.mes, DATA_LINE.mes[0], DATA_LINE.mes[1], yb, 'center');
+        put(d.ano, DATA_LINE.ano[0], DATA_LINE.ano[1], yb, 'center');
       }
-      entries.slice(p * per, p * per + per).forEach((e, r) => {
-        const bottom = ROW_TOPS[r] + 11;
+      entries.slice(p * per, compact ? entries.length : p * per + per).forEach((e, r) => {
+        const top = compact ? ROW_TOPS[0] : ROW_TOPS[r];
+        const bottom = compact ? Yr(r, top + 11) : top + 11;
         put(pad(e.dia), DIA[0][0], DIA[0][1], bottom, 'center');
         put(pad(e.mes), DIA[1][0], DIA[1][1], bottom, 'center');
         put(e.ano, DIA[2][0], DIA[2][1], bottom, 'center');
@@ -466,7 +494,7 @@
           put(hh, HORA[col][0][0], HORA[col][0][1], bottom, 'center');
           put(mm, HORA[col][1][0], HORA[col][1][1], bottom, 'center');
         });
-        put(e.motivo, MOTIVO[0], MOTIVO[1], ROW_TOPS[r] + 22.7 + 11, 'left');
+        put(e.motivo, MOTIVO[0], MOTIVO[1], compact ? Yr(r, top + 22.7 + 11) : top + 22.7 + 11, 'left');
       });
     }
     return await out.save();
@@ -845,7 +873,7 @@
       dl.download = ('Justificativa de Ponto - ' + (info.nome || 'servidor') + ' - ' + mes + ' ' + inc[0].ano + '.pdf').replace(/[\\/:*?"<>|]/g, '');
       dl.classList.remove('hidden'); $('prt').href = state.pdfUrl;
       const pv = $('preview'); pv.src = state.pdfUrl; pv.classList.remove('hidden');
-      const nPag = Math.ceil(inc.length / 9);
+      const nPag = inc.length > 9 ? 1 : Math.ceil(inc.length / 9);
       $('genmsg').textContent = 'Pronto! ' + inc.length + ' justificativa(s) em ' + nPag + ' página(s).' + (nWarn ? ' Atenção: ' + nWarn + ' dia(s) com horário não preenchido (aviso amarelo acima) saíram incompletos.' : '');
       $('prt').classList.remove('hidden');
       $('s4').scrollIntoView({ behavior: 'smooth', block: 'start' });
